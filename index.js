@@ -1,10 +1,21 @@
 var trumpet = require('trumpet');
 var zlib = require('zlib');
 
-module.exports = function harmonBinary(reqSelectors, resSelectors, htmlOnly) {
+module.exports = function harmonBinary(reqSelectors, resSelectors, options) {
   var _reqSelectors = reqSelectors || [];
   var _resSelectors = resSelectors || [];
-  var _htmlOnly     = (typeof htmlOnly == 'undefined') ? false : htmlOnly;
+
+  var _htmlOnly     = false;
+  // default to a maximum time out of 60 seconds. Interval runs every 10 milliseconds. (6000 * 10 ms = 60 seconds)
+  var _maxTimeout    =  6000;
+
+  if (typeof options === 'object') {
+    _htmlOnly       = (typeof options.htmlOnly === 'undefined') ? _htmlOnly : options.htmlOnly;
+    _maxTimeout     = (typeof options.maxTimeout === 'undefined') ? _maxTimeout : options.maxTimeout;
+  } else if (typeof options === 'boolean') { // backward compatibility
+    _htmlOnly       = options;
+  }
+  var _endEmittedInterval;
 
   function prepareRequestSelectors(req, res) {
     var tr = trumpet();
@@ -105,6 +116,26 @@ module.exports = function harmonBinary(reqSelectors, resSelectors, htmlOnly) {
     tr.on('end', function () {
       _end.call(res);
     });
+
+    tr.on('finish', () => {
+      let intervalCount = 0;
+      _endEmittedInterval = setInterval(() => {
+        try {
+            intervalCount += 1;
+            // make sure read and write are completed after finish
+            if (tr._writableState.ended === true && tr._tokenize._readableState.endEmitted === true) {
+                clearInterval(_endEmittedInterval);
+                _end.call(res);
+            } else if (intervalCount >= _maxTimeout) {
+                clearInterval(_endEmittedInterval);
+                _end.call(res);
+            }
+        } catch (err) {
+            clearInterval(_endEmittedInterval);
+            _end.call(res);
+        }
+        }, 10);
+      });
   }
 
   function prepareSelectors(tr, selectors, req, res) {
